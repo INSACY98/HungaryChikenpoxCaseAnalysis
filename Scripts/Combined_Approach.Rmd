@@ -1,0 +1,569 @@
+---
+title: "Hungary Chickenpox Case Analysis"
+date: "5/3/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r}
+library(MTS)
+library(fpp)
+library(TSA)
+library(forecast)
+library(Metrics)
+library(fracdiff)
+library(lubridate)
+```
+
+
+#load 52 weeks data
+```{r}
+dataPath<-"***"
+```
+
+
+```{r}
+data<-read.csv(paste(dataPath,'hungary_chickenpox2.csv',sep = '/'), header=TRUE)
+row.names(data)<-data$Date
+Date<-data$Date
+data<-data[-1]
+```
+
+
+
+```{r}
+data$TOTAL<-rowSums(data)
+```
+
+
+```{r}
+total<-ts(data$TOTAL,frequency=52,start=c(2005,1))
+```
+
+
+Plot total data
+```{r}
+plot(total)
+```
+
+KPSS test for total
+```{r}
+kpss.test(total)
+```
+
+
+Transformation
+```{r}
+#natural log
+lambda<-0
+trans.total<-BoxCox(total,lambda)
+plot(trans.total)
+```
+
+KPSS test for trans total
+```{r}
+kpss.test(trans.total)
+```
+
+
+
+```{r}
+diff<-diff(trans.total)
+plot(diff,xlab="Years 2005-2014",main="Difference of Transformation Data", ylab="diff = 1")
+```
+
+```{r}
+kpss.test(diff)
+```
+
+
+Split Data
+```{r}
+#Take train (2005-2013) 
+train <- window(total,start=c(2005,1),end=c(2013,52))
+train
+```
+
+
+```{r}
+#test(2014)
+test<-window(total,start=c(2014),end=c(2014,52))
+test
+```
+
+
+
+
+```{r}
+checkresiduals(train)
+```
+
+##1.Seasonal Arima model
+
+```{r}
+m1<-auto.arima(train,seasonal=TRUE,lambda="auto",trace=TRUE)
+summary(m1)
+```
+
+
+```{r}
+as.character(m1)
+```
+
+
+```{r}
+tsdisplay(m1$residuals,main="Residuals from ARIMA(3,0,0)(1,1,0)[52] with drift")
+```
+
+```{r}
+checkresiduals(m1,lag=56)
+```
+
+Plot forecast of SARIMA
+```{r}
+f1 <- forecast(m1, h = 52)$mean
+plot(f1)
+```
+
+```{r}
+autoplot(test,main="sARIMA Performance") +
+  autolayer(f1, series="sARIMA") 
+```
+
+
+```{r}
+mape1 <- mape(test, f1)
+rmse1 <- rmse(test, f1)
+
+cbind(mape1, rmse1)
+```
+
+
+
+```{r}
+eacf(train)
+```
+
+
+
+```{r}
+edaarima<-auto.arima(train,d=1,seasonal=TRUE,lambda=0,trace=TRUE)
+```
+
+```{r}
+summary(edaarima)
+checkresiduals(edaarima,lag=56)
+```
+
+
+##2.Seasonal naïve Model
+
+```{r}
+
+Model_SNaive <- snaive(train, 52)
+
+```
+
+
+
+
+```{r}
+f3 <- forecast(Model_SNaive, h = 52)$mean
+
+```
+
+
+
+```{r}
+autoplot(test) +
+  autolayer(f3, series="Seasonal naïve")
+  
+```
+
+```{r}
+mape3 <- mape(test, f3)
+rmse3 <- rmse(test, f3)
+
+```
+
+
+```{r}
+tsdisplay(residuals(Model_SNaive),main ="Residuals from Seasonal naïve Model")
+```
+
+```{r}
+checkresiduals(Model_SNaive,lag=56)
+```
+```{r}
+summary(Model_SNaive)
+```
+
+
+
+##3.ARFIMA Model
+```{r}
+m2<-arfima(train,seasonal=TRUE)
+summary(m2)
+f4<-forecast(m2,h=52)$mean
+```
+
+
+```{r}
+m2$hessian.dpq
+```
+
+
+
+
+
+```{r}
+checkresiduals(m2,lag=56)
+```
+
+```{r}
+Box.test(m2$residuals,type = c( "Ljung-Box"))
+```
+
+
+
+```{r}
+rmse(train,m2$fitted)
+mape(train,m2$fitted)
+```
+
+
+Plot forecast of ARFIMA
+```{r}
+autoplot(test,main="ARFIMA Performance") +
+  autolayer(f4, series="ARFIMA")
+```
+
+```{r}
+
+mape2 <- mape(test, f4)
+rmse2 <- rmse(test, f4)
+
+cbind(mape2, rmse2)
+```
+
+
+```{r}
+tsdisplay(residuals(m2),main="ARFIMA")
+```
+
+
+##4.TBATS Model
+
+```{r}
+m3<-tbats(train,use.trend=TRUE)
+summary(m3)
+as.character(m3)
+```
+
+
+```{r}
+rmse(train,m3$fitted.values)
+mape(train,m3$fitted.values)
+```
+
+
+Plot forecast of TBATs
+
+```{r}
+foretbats<-forecast(m3,h=52)$mean
+
+autoplot(test,main="TBATs Performance") +
+  autolayer(foretbats, series="TBATs")
+
+
+
+```
+
+
+
+```{r}
+tsdisplay(residuals(m3),main="Residuals from TBATS(0.005, {0,0}, 0.908, {<52,13>})")
+```
+
+```{r}
+checkresiduals(m3,lag=56)
+```
+
+
+```{r}
+mape4 <- mape(test, foretbats)
+rmse4 <- rmse(test, foretbats)
+
+cbind(mape4, rmse4)
+```
+
+
+##5.Fourier Model
+
+```{r}
+fitall<-list()
+for (i in 1:25){
+  fit <- auto.arima(train, xreg = fourier(train, K = i), seasonal = FALSE)
+  fitall<-c(fitall,fit$aicc)
+}
+
+
+```
+
+
+Potential k values
+8 9 10 15 18 22
+
+```{r}
+fitall
+```
+
+
+
+
+```{r}
+bestfit <- list(aicc=Inf)
+for (i in 8:25){
+  fit <- auto.arima(train, xreg = fourier(train, K = i), seasonal = FALSE)
+  if (fit$aicc < bestfit$aicc)
+    bestfit <- fit
+  else break;
+}
+cat(i)
+
+```
+
+```{r}
+summary(bestfit)
+```
+
+
+```{r}
+checkresiduals(bestfit,lag=56)
+```
+
+
+Plot forecast of Fourier
+
+```{r}
+fc <- forecast(bestfit, xreg = fourier(train, K = 12, h = 52))
+
+plot(fc)
+```
+
+
+
+```{r}
+autoplot(test,main='Fourier Arima Performance') + autolayer(fc$mean,series="Fourier")
+```
+
+```{r}
+mape5 <- mape(test, fc$mean)
+rmse5 <- rmse(test, fc$mean)
+
+cbind(mape5, rmse5)
+```
+
+
+##6.tslm model
+
+```{r}
+t1 <- tslm(train~trend + season)
+summary(t1)
+```
+
+
+```{r}
+rmse(train,t1$fitted.values)
+mape(train,t1$fitted.values)
+```
+
+
+Plot forecast of tslm
+
+```{r}
+foretslm<-forecast(t1,h=52)$mean
+
+autoplot(test) +
+  autolayer(foretslm, series="tslm")
+
+
+
+```
+
+
+```{r}
+tsdisplay(residuals(t1),main="Residuals from tslm")
+```
+
+```{r}
+checkresiduals(t1,lag=56)
+```
+
+
+```{r}
+mape7 <- mape(test, foretslm)
+rmse7 <- rmse(test, foretslm)
+
+cbind(mape7, rmse7)
+```
+
+
+Forecast of all models
+
+```{r}
+autoplot(test,main = "Model Performance") +
+  autolayer(f1, series="sArima") +
+  autolayer(foretbats, series="TBATs")+
+  autolayer(f4,series="ARFIMA")+
+  autolayer(f3, series="Seasonal naïve")+
+  autolayer(fc$mean, series="Fourier")
+  autolayer(foretslm,series="tslm")
+```
+
+Forecast of selected models
+
+```{r}
+autoplot(test,main="Selected Model Performance") +
+  autolayer(f1, series="sArima") +
+  autolayer(foretbats, series="TBATs")+
+  autolayer(f4,series="ARFIMA")
+```
+
+
+Test rmse ans mape for all models
+
+```{r}
+data.frame('Metrics' = c('MAPE','RMSE'),
+           'sArima' = c(mape1,rmse1),
+           'ARFIMA'=c(mape2,rmse2),
+           'Seasonal naïve' = c(mape3,rmse3),
+           'TBATs' = c(mape4,rmse4),
+           'Fourier'=c(mape5,rmse5),
+           "tslm"=c(mape7,rmse7))
+```
+
+
+
+
+Load original data
+
+```{r}
+data2<-read.csv(paste(dataPath,'hungary_chickenpox.csv',sep = '/'), header=TRUE,stringsAsFactors = FALSE)
+country<-rowSums(data2[,-1])
+country_weekly<-ts(country,frequency = 365.25/7, start = decimal_date(dmy(data2[1,1])))
+```
+
+```{r}
+country_weekly
+```
+
+
+
+```{r}
+plot(country_weekly)
+```
+
+
+Make train from 2005-2012 and test from 2012-2013
+
+```{r}
+train2<-window(country_weekly,start=2005,end=2013)
+test2<-window(country_weekly,start=2013,end=2014)
+```
+
+
+## TBATs Model no. 2
+
+```{r}
+m3tt<-tbats(train2)
+summary(m3tt)
+as.character(m3tt)
+```
+
+
+```{r}
+foretbatstt<-forecast(m3tt,h=52)$mean
+
+autoplot(test2,main="TBATs 13 Performance") +
+  autolayer(foretbatstt, series="TBATs 13")
+```
+
+```{r}
+tsdisplay(residuals(m3tt),main="Residuals from TBATS(0.01, {0,0}, 0.937, {<52.18,6>})")
+```
+
+
+```{r}
+mape6 <- mape(test2, foretbatstt)
+rmse6 <- rmse(test2, foretbatstt)
+
+cbind(mape6, rmse6)
+```
+
+```{r}
+checkresiduals(m3tt)
+```
+
+
+##Fourier Model no.2
+
+```{r}
+bestfit13 <- list(aicc=Inf)
+for (i in 17:25){
+  fit <- auto.arima(train2, xreg = fourier(train2, K = i), seasonal = FALSE, lambda = 0)
+  if (fit$aicc < bestfit13$aicc)
+    bestfit13 <- fit
+  else break;
+}
+# I = 12 or 15 or 18
+```
+
+
+```{r}
+#summary(bestfit)
+fc13 <- forecast(bestfit13, xreg = fourier(train2, K = 18, h = 52))
+# fc2 <- forecast(bestfit, xreg = fourier(train_org, K = 2, h = 52), lambda = 0)
+plot(fc13)
+```
+
+```{r}
+autoplot(test2,main='Fourier Arima') + autolayer(fc13$mean)
+```
+
+```{r}
+rmse(fc13$mean, test2)
+mape(fc13$mean, test2)
+```
+
+
+##sArima model no.2
+
+```{r}
+m113<-auto.arima(train2,seasonal=TRUE,lambda="auto",trace=TRUE)
+summary(m113)
+as.character(m113)
+```
+
+```{r}
+checkresiduals(m113)
+```
+
+```{r}
+f113 <- forecast(m113, h = 52)$mean
+plot(f113)
+```
+
+
+```{r}
+autoplot(test2,main="sARIMA 13 Performance") +
+  autolayer(f113, series="sARIMA 13") 
+```
+
+```{r}
+rmse(test2,f113)
+mape(test2,f113)
+```
+
